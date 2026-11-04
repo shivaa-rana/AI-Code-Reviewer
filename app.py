@@ -119,9 +119,11 @@ def _render_finding(finding: Finding, index: int) -> None:
 	icon = {"critical": "🔴", "high": "🟠", "medium": "🟡"}.get(finding.severity, "⚪")
 	title = f"{icon} {index}. {finding.title} · {finding.file_path}:{finding.line} · {_state(finding).upper()}"
 	with st.expander(title):
+		safe_category = finding.category if finding.category in {"bug", "security", "style"} else "style"
+		safe_severity = finding.severity if finding.severity in {"critical", "high", "medium", "low", "info"} else "info"
 		st.markdown(
-			f'<span class="pill pill-{finding.category}">{html.escape(finding.category)}</span>'
-			f'<span class="pill pill-severity-{finding.severity}">{html.escape(finding.severity)}</span>'
+			f'<span class="pill pill-{safe_category}">{html.escape(finding.category)}</span>'
+			f'<span class="pill pill-severity-{safe_severity}">{html.escape(finding.severity)}</span>'
 			f'<span class="pill pill-{"llm" if finding.source == "llm" else "style"}">'
 			f"{html.escape(finding.source)}: {html.escape(finding.rule_id)}</span>",
 			unsafe_allow_html=True,
@@ -168,7 +170,7 @@ with st.container(border=True):
 	run_clicked = st.button("Run Review", type="primary", icon=":material/search:")
 
 if run_clicked:
-	wait = COOLDOWN_SECONDS - (time.time() - st.session_state.get("last_run", 0))
+	wait = max(0, COOLDOWN_SECONDS - (time.time() - st.session_state.get("last_run", 0)))
 	if not repository_url.strip():
 		st.error("Enter a GitHub URL to begin.")
 	elif wait > 0:
