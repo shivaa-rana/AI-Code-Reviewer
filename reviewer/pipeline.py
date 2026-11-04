@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from .deps import audit_dependencies
 from .ingest import repository_workspace
 from .llm_review import discover_issues, review_findings, summarize
+from .test_generator import generate_test
 from .models import ReviewReport
 from .scoring import grade, risk_score
 from .static_scan import scan_repository
@@ -15,6 +16,7 @@ def run_review(
         verify_with_llm: bool = True,
         llm_settings: dict[str, str] | None = None,
         discover_with_llm: bool = True,
+        generate_tests: bool = False,
 ) -> ReviewReport:
         with repository_workspace(repository_url) as snapshot:
                 is_self_scan = "github.com/shivaa-rana/ai-code-reviewer" in repository_url.lower()
@@ -42,6 +44,18 @@ def run_review(
                                 extra, discovery_error = discover_issues(snapshot.root, python_files, findings, llm_settings)
                                 findings = findings + extra
                                 llm_error = llm_error or discovery_error
+                if generate_tests and verify_with_llm:
+                        target = next(
+                                (f for f in findings if f.is_false_positive is False),
+                                next((f for f in findings if f.source == "llm"), None),
+                        )
+                        if target is not None:
+                                test_code, test_note = generate_test(
+                                        snapshot.root, target, llm_settings
+                                )
+                                target.generated_test = test_code
+                                target.generated_test_note = test_note or ""
+
                 findings = sorted(
                         findings + dependency_findings,
                         key=lambda f: ({"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}[f.severity], f.file_path, f.line),

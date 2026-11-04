@@ -133,6 +133,15 @@ def _render_finding(finding: Finding, index: int) -> None:
 			st.code(finding.code_snippet, language="python")
 		if finding.explanation:
 			st.markdown(f"**AI review**  \n{finding.explanation}")
+			if finding.source == "llm":
+			        st.progress(
+			                finding.confidence / 100,
+			                text=f"AI confidence estimate: {finding.confidence}%",
+			        )
+			        if finding.evidence:
+			                st.markdown(f"**Supporting evidence**  \n{finding.evidence}")
+			        if finding.attack_scenario:
+			                st.markdown(f"**Potential attack scenario**  \n{finding.attack_scenario}")
 		if finding.suggested_fix:
 			st.markdown(f"**Suggested fix**  \n{finding.suggested_fix}")
 		if finding.fix_diff:
@@ -142,12 +151,30 @@ def _render_finding(finding: Finding, index: int) -> None:
 				st.warning(f"Auto-fix proposed but NOT verified: {finding.fix_note}")
 			st.code(finding.fix_diff, language="diff")
 
+		if finding.generated_test:
+			with st.expander("AI-generated pytest test"):
+				st.caption("Generated code is untrusted. Review it before running.")
+				st.code(finding.generated_test, language="python")
+				st.download_button(
+					"Download pytest file",
+					finding.generated_test,
+					file_name="test_generated_review.py",
+					mime="text/x-python",
+					key=f"generated-test-{finding.id}",
+				)
+		elif finding.generated_test_note:
+			st.caption(f"Test generator: {finding.generated_test_note}")
+
 
 with st.sidebar:
 	st.header("Review options")
 	verify_with_llm = st.checkbox("AI verification and auto-fix (Groq)", value=True)
 	discover_with_llm = st.checkbox(
 		"AI bug discovery", value=True, help="Asks the model to look for logic bugs the linters miss in the largest files."
+	)
+	generate_tests = st.checkbox(
+		"AI test generator", value=False,
+		help="Generate pytest tests for one AI-confirmed finding. Generated tests are not executed.",
 	)
 	st.caption("Verification reviews up to 40 findings in parallel batches. Patches are only marked verified if a re-scan passes.")
 	st.divider()
@@ -179,7 +206,7 @@ if run_clicked:
 		st.session_state["last_run"] = time.time()
 		try:
 			with st.spinner("Cloning, scanning, verifying and patching..."):
-				report = run_review(repository_url, verify_with_llm, _llm_settings(), discover_with_llm)
+				report = run_review(repository_url, verify_with_llm, _llm_settings(), discover_with_llm, generate_tests)
 			st.session_state["review_report"] = report.model_dump(mode="json")
 		except (ValueError, RuntimeError, OSError) as error:
 			st.error(str(error))
@@ -200,19 +227,31 @@ if stored_report:
 	score_col, summary_col = st.columns([1, 3])
 	with score_col:
 		st.markdown(f'<div class="grade">{html.escape(report.grade)}</div>', unsafe_allow_html=True)
-		st.caption(f"Health score {report.risk_score}/100")
+		st.caption(
+		    f"Health score {report.risk_score}/100 · "
+		    "Based on actionable findings; pending AI discoveries are excluded"
+		)
 	with summary_col:
 		if report.summary:
 			st.markdown(f"**AI summary**  \n{report.summary}")
 		else:
 			st.markdown("**Summary**  \nEnable AI verification for a written summary of the top risks.")
 
-	metric_columns = st.columns(5)
+	pending_ai = sum(
+	    f.source == 'llm' and f.is_false_positive is None
+	    for f in report.findings
+	)
+	unverified_total = sum(
+	    f.is_false_positive is None for f in report.findings
+	)
+
+	metric_columns = st.columns(6)
 	metric_columns[0].metric("Findings shown", len(visible))
 	metric_columns[1].metric("AI-confirmed", confirmed_count)
-	metric_columns[2].metric("Verified auto-fixes", verified_fixes)
-	metric_columns[3].metric("Filtered by AI", len(filtered))
-	metric_columns[4].metric("Unverified", sum(f.is_false_positive is None for f in report.findings))
+	metric_columns[2].metric("Verified fixes", verified_fixes)
+	metric_columns[3].metric("Pending AI risks", pending_ai)
+	metric_columns[4].metric("Filtered by AI", len(filtered))
+	metric_columns[5].metric("Unverified total", unverified_total)
 
 	if report.llm_error:
 		st.info(report.llm_error)

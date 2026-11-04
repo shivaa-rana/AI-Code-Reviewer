@@ -25,11 +25,16 @@ class Finding(BaseModel):
 	code_snippet: str = ""
 	is_false_positive: bool | None = None
 	explanation: str = ""
+	confidence: int = Field(default=0, ge=0, le=100)
+	evidence: str = ""
+	attack_scenario: str = ""
 	suggested_fix: str = ""
 	# Auto-fix agent output: unified diff and whether the patch passed re-scanning.
 	fix_diff: str = ""
 	fix_verified: bool | None = None
 	fix_note: str = ""
+	generated_test: str = ""
+	generated_test_note: str = ""
 
 
 class ReviewReport(BaseModel):

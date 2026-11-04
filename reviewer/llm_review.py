@@ -41,18 +41,46 @@ def _client(selected: dict[str, str]) -> OpenAI:
 
 
 def _chat_json(selected: dict[str, str], system: str, user: str) -> dict[str, Any]:
-	response = _client(selected).chat.completions.create(
-		model=selected["model"],
-		temperature=0,
-		response_format={"type": "json_object"},
-                max_completion_tokens=1024,
-                reasoning_effort="low",
-		messages=[{"role": "system", "content": f"{system} {UNTRUSTED}"}, {"role": "user", "content": user}],
-	)
-	parsed = json.loads(response.choices[0].message.content or "")
-	if not isinstance(parsed, dict):
-		raise ValueError("LLM did not return a JSON object.")
-	return parsed
+    client = _client(selected)
+    messages = [
+        {"role": "system", "content": f"{system} {UNTRUSTED}"},
+        {"role": "user", "content": user},
+    ]
+
+    try:
+        response = client.chat.completions.create(
+            model=selected["model"],
+            temperature=0,
+            response_format={"type": "json_object"},
+            max_completion_tokens=4096,
+            reasoning_effort="low",
+            messages=messages,
+        )
+    except OpenAIError as error:
+        message = str(error).lower()
+        if getattr(error, "status_code", None) != 400 or "json" not in message:
+            raise
+
+        response = client.chat.completions.create(
+            model=selected["model"],
+            temperature=0,
+            max_completion_tokens=4096,
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"{system} Return ONLY one valid JSON object. {UNTRUSTED}",
+                },
+                {"role": "user", "content": user},
+            ],
+        )
+
+    content = response.choices[0].message.content or ""
+    parsed = json.loads(content)
+
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM did not return a JSON object.")
+
+    return parsed
 
 
 VERIFY_SYSTEM = (
@@ -160,12 +188,43 @@ def _apply_fix_agent(
 
 
 DISCOVER_SYSTEM = (
-	"You are a senior reviewer looking for real logic bugs and security flaws that linters miss "
-	"(missing input validation, race conditions, off-by-one errors, unsafe file or path handling, "
-	"wrong error handling, injection). Be conservative: report only issues you are confident about, "
-	"never style nits. Return one JSON object with an 'issues' array (max 5 per file). Each item has "
-	"'file', 'line' (integer line number as printed), 'title', 'category' ('bug' or 'security'), "
-	"'severity' ('high', 'medium' or 'low') and 'explanation' (1-2 sentences)."
+    "You are a senior application security engineer and expert Python code reviewer. "
+    "Perform evidence-based vulnerability discovery. Do not report speculative issues. "
+
+    "CRITICAL ANALYSIS REQUIREMENTS: "
+    "1. Trace untrusted input from its source to the actual sensitive operation. "
+    "2. Inspect all relevant validation, sanitization, allowlists, canonicalization, "
+    "authorization checks, and defensive controls before deciding a vulnerability exists. "
+    "3. Never assume that passing user input to another function is automatically unsafe. "
+    "Trace the called function and relevant downstream implementation. "
+    "4. Do not report command injection when subprocess or Git commands use argument "
+    "arrays without shell execution and untrusted arguments are properly validated. "
+    "5. Do not report SSRF when destinations are strictly allowlisted, protocols are "
+    "restricted, and the original URL is replaced with a trusted canonical destination. "
+    "6. Do not report path traversal when paths are safely normalized and constrained. "
+    "7. Do not report missing validation without identifying the exact missing security "
+    "control and demonstrating a realistic bypass. "
+    "8. Distinguish confirmed vulnerabilities from theoretical risks and code-quality issues. "
+    "9. If existing controls mitigate the suspected vulnerability, DO NOT report it. "
+    "10. If the supplied context is insufficient to establish exploitability, omit the finding. "
+
+    "For every reported issue, provide concrete source-code evidence, a realistic attack "
+    "scenario, and a confidence estimate. The attack scenario must explain exactly how "
+    "the attacker-controlled value reaches the vulnerable operation and bypasses defenses. "
+
+    "Return one JSON object with an 'issues' array. Each issue must contain: "
+    "'file' (string), 'line' (integer), 'title' (string), "
+    "'category' (bug/security/style), 'severity' (critical/high/medium/low/info), "
+    "'message' (string), 'explanation' (string), "
+    "'confidence' (integer from 0 to 100), "
+    "'evidence' (specific source-code evidence), "
+    "'attack_scenario' (realistic exploit scenario), "
+    "'suggested_fix' (string). "
+
+    "Only report issues supported by the supplied source code. "
+    "Do not invent functions, APIs, execution paths, or vulnerabilities. "
+    "Return an empty issues array when no sufficiently supported issue exists. "
+    "Return valid JSON only, without Markdown fences."
 )
 
 
@@ -215,6 +274,18 @@ def discover_issues(
 				continue  # discard hallucinated locations
 			if severity not in {"high", "medium", "low"} or category not in {"bug", "security"}:
 				continue
+			confidence = issue.get("confidence")
+			evidence = issue.get("evidence")
+			attack_scenario = issue.get("attack_scenario")
+			explanation = issue.get("explanation")
+			if isinstance(confidence, bool) or not isinstance(confidence, int) or not 0 <= confidence <= 100:
+				continue
+			if not isinstance(evidence, str) or not evidence.strip():
+				continue
+			if not isinstance(attack_scenario, str) or not attack_scenario.strip():
+				continue
+			if not isinstance(explanation, str) or not explanation.strip():
+				continue
 			if any(f.file_path == name and abs(f.line - line) <= 2 for f in existing):
 				continue  # already reported by a scanner
 			start = max(0, line - 4)
@@ -232,6 +303,9 @@ def discover_issues(
 					line=line,
 					code_snippet=snippet,
 					explanation=str(issue.get("explanation", ""))[:2000],
+					confidence=confidence,
+					evidence=evidence[:2000],
+					attack_scenario=attack_scenario[:2000],
 				)
 			)
 	return found, error
@@ -245,24 +319,67 @@ def _safe(function, item):
 
 
 def summarize(findings: list[Finding], score: int, grade: str, settings: dict[str, str] | None = None) -> str:
-	selected = _settings(settings)
-	if not selected["api_key"] or not findings:
-		return ""
-	top = [
-		{"title": f.title, "file": f.file_path, "severity": f.severity, "category": f.category}
-		for f in findings
-		if f.is_false_positive is not True
-	][:15]
-	if not top:
-		return ""
-	try:
-		parsed = _chat_json(
-			selected,
-			"You write executive summaries of code reviews for engineering leads. Return one JSON object "
-			"with a 'summary' string: 3-4 plain sentences naming the biggest risks and what to fix first. "
-			"Only use the supplied data.",
-			json.dumps({"health_score": score, "grade": grade, "top_findings": top}),
-		)
-		return str(parsed.get("summary", ""))[:1200]
-	except (OpenAIError, ValueError, TypeError, AttributeError):
-		return ""
+    selected = _settings(settings)
+    if not selected["api_key"] or not findings:
+        return ""
+
+    active = [f for f in findings if f.is_false_positive is not True]
+    if not active:
+        return ""
+
+    top = [
+        {
+            "title": f.title,
+            "file": f.file_path,
+            "line": f.line,
+            "severity": f.severity,
+            "category": f.category,
+            "source": f.source,
+            "status": (
+                "confirmed"
+                if f.is_false_positive is False
+                else "unverified"
+            ),
+            "confidence": f.confidence,
+            "evidence": f.evidence,
+            "explanation": f.explanation,
+        }
+        for f in active[:15]
+    ]
+
+    confirmed_count = sum(f.is_false_positive is False for f in active)
+    unverified_count = sum(f.is_false_positive is None for f in active)
+
+    system = (
+        "You write accurate executive summaries of code reviews for engineering leads. "
+        "Return one JSON object with a 'summary' string containing 3-4 plain sentences. "
+        "Use only the supplied data. "
+        "CRITICAL ACCURACY RULES: "
+        "A finding with status 'unverified' is only an AI suspicion, not a confirmed vulnerability. "
+        "Never describe an unverified finding as confirmed, proven, exploitable, or an established vulnerability. "
+        "Use wording such as 'AI flagged a potential issue that requires manual verification'. "
+        "Only findings with status 'confirmed' may be described as confirmed. "
+        "Do not upgrade severity or invent attack scenarios, exploitability, or impact. "
+        "Distinguish confirmed findings from unverified findings. "
+        "If there are no confirmed findings, explicitly say that no findings have been confirmed. "
+        "Mention the health score as a separate metric, not as proof that no risks exist. "
+        "Do not recommend fixes for issues unless the supplied evidence supports them."
+    )
+
+    payload = {
+        "health_score": score,
+        "grade": grade,
+        "confirmed_findings": confirmed_count,
+        "unverified_findings": unverified_count,
+        "top_findings": top,
+    }
+
+    try:
+        parsed = _chat_json(
+            selected,
+            system,
+            json.dumps(payload),
+        )
+        return str(parsed.get("summary", ""))[:1200]
+    except (OpenAIError, ValueError, TypeError, AttributeError):
+        return ""
