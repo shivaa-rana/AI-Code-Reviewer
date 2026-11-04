@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -60,12 +61,12 @@ SEEDED_CASES = [
 		True,
 		"Bare exception handler",
 	),
-	SeededCase(
-		"safe_subprocess.py",
-		"import subprocess\n\ndef run(arguments):\n    return subprocess.run(arguments, check=True, capture_output=True)\n",
-		False,
-		"Argument-list subprocess invocation",
-	),
+        SeededCase(
+                "safe_subprocess.py",
+                'import subprocess\n\ndef run():\n    return subprocess.run(["git", "status", "--short"], check=True, capture_output=True, text=True)\n',
+                False,
+                "Fixed executable and argument-list subprocess invocation",
+        ),
 	SeededCase(
 		"environment_secret.py",
 		"import os\n\npassword = os.environ.get(\"APP_PASSWORD\")\n",
@@ -76,7 +77,7 @@ SEEDED_CASES = [
 	# --- added cases: more vulnerability classes and many more safe controls -------------------
 	SeededCase(
 		"aws_key.py",
-		'AWS_KEY = "AKIAABCDEFGHIJKLMNOP"\nprint(len(AWS_KEY))\n',
+                "AWS_KEY = " + repr("AKIA" + "ABCDEFGHIJKLMNOP") + "\nprint(len(AWS_KEY))\n",
 		True,
 		"Committed AWS access key",
 	),

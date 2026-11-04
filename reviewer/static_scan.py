@@ -65,7 +65,7 @@ def _snippet(file_path: Path, line: int) -> str:
 
 def _run_scanner(command: list[str], cwd: Path, name: str) -> str:
 	try:
-		result = subprocess.run(
+		result = subprocess.run(  # nosec B603 - fixed argument list; shell execution is not enabled
 			command,
 			cwd=cwd,
 			capture_output=True,

@@ -9,6 +9,7 @@ import streamlit as st
 
 from reviewer.models import Finding, ReviewReport
 from reviewer.pipeline import run_review
+from reviewer.sarif import to_sarif
 
 st.set_page_config(page_title="AI Code Reviewer", page_icon="CR", layout="wide")
 st.markdown(
@@ -243,8 +244,13 @@ if stored_report:
 
 	json_bytes = json.dumps(report.model_dump(mode="json"), indent=2).encode("utf-8")
 	markdown_bytes = _markdown_report(report).encode("utf-8")
-	export_json, export_markdown = st.columns(2)
+	sarif_bytes = json.dumps(to_sarif(report), indent=2).encode("utf-8")
+	export_json, export_markdown, export_sarif = st.columns(3)
 	export_json.download_button("Download JSON report", json_bytes, file_name="code-review-report.json", mime="application/json")
 	export_markdown.download_button(
 		"Download Markdown report", markdown_bytes, file_name="code-review-report.md", mime="text/markdown"
+	)
+	export_sarif.download_button(
+		"Download SARIF report", sarif_bytes,
+		file_name="code-review-report.sarif", mime="application/sarif+json"
 	)

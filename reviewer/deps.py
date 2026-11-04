@@ -32,7 +32,7 @@ def audit_dependencies(root: Path) -> tuple[list[Finding], str]:
 		pinned_file = Path(directory) / "requirements.txt"
 		pinned_file.write_text("\n".join(pinned[:300]) + "\n", encoding="utf-8")
 		try:
-			result = subprocess.run(
+			result = subprocess.run(  # nosec B603 - fixed argument list; shell execution is not enabled
 				[executable, "-r", str(pinned_file), "--no-deps", "--disable-pip", "-f", "json", "--progress-spinner", "off"],
 				capture_output=True,
 				text=True,

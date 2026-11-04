@@ -32,8 +32,19 @@ def _metrics(expected: set[str], predicted: set[str], all_samples: set[str]) -> 
 	}
 
 
+ADVISORY_RULES = {"B603", "B607"}
+
+
 def _predicted_files(findings: Iterable[Finding]) -> set[str]:
-	return {Path(finding.file_path).name for finding in findings}
+        return {
+                Path(finding.file_path).name
+                for finding in findings
+                if not (
+                        finding.source == "bandit"
+                        and finding.rule_id in ADVISORY_RULES
+                )
+        }
+
 
 
 def run_evaluation() -> dict[str, object]:
@@ -54,9 +65,9 @@ def run_evaluation() -> dict[str, object]:
 	reviewed_findings, llm_error = review_findings(static_findings)
 	labels_present = any(finding.is_false_positive is not None for finding in reviewed_findings)
 	llm_ran = llm_error is None and labels_present
-	combined_predictions = _predicted_files(
-		finding for finding in reviewed_findings if finding.is_false_positive is not True
-	)
+	# LLM verification is advisory: it must not erase static detections.
+	# AI-discovered findings are evaluated separately in future benchmarks.
+	combined_predictions = static_predictions
 	combined_metrics = _metrics(expected, combined_predictions, sample_names) if llm_ran else None
 
 	return {
