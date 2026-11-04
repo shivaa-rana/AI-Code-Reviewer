@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import html
 import json
+import time
 from datetime import datetime
 
 import streamlit as st
@@ -24,6 +26,8 @@ st.markdown(
 	.pill { display: inline-block; border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; margin-right: 6px; font-size: .76rem; text-transform: uppercase; }
 	.pill-security { color: #ff9a86; border-color: #664137; }
 	.pill-bug { color: #f1bd72; border-color: #685237; }
+	.pill-llm { color: #c9a6ff; border-color: #55467a; }
+	.grade { font-size: 3.2rem; font-weight: 800; line-height: 1; }
 	.pill-style { color: #9bb9f2; border-color: #3e4e6d; }
 	.pill-severity-critical, .pill-severity-high { color: #ff9a86; border-color: #664137; }
 	.pill-severity-medium { color: #f1bd72; border-color: #685237; }
@@ -37,6 +41,9 @@ st.markdown(
 	""",
 	unsafe_allow_html=True,
 )
+
+
+COOLDOWN_SECONDS = 15
 
 
 def _secret(name: str) -> str:
@@ -55,30 +62,40 @@ def _llm_settings() -> dict[str, str]:
 	}
 
 
+def _state(finding: Finding) -> str:
+	if finding.is_false_positive is True:
+		return "Filtered as false positive"
+	if finding.is_false_positive is False:
+		return "Confirmed"
+	return "AI-detected" if finding.source == "llm" else "Unverified"
+
+
 def _markdown_report(report: ReviewReport) -> str:
 	lines = [
 		"# AI Code Review",
 		"",
 		f"- Repository: {report.repository_url}",
+		f"- Target: {report.target_description or 'Default branch'}",
 		f"- Scanned at: {report.scanned_at}",
 		f"- Python files scanned: {report.scanned_files}",
+		f"- Health score: {report.risk_score}/100 (grade {report.grade})",
 		f"- Findings: {len(report.findings)}",
 		f"- LLM verification: {'used' if report.llm_used else 'not used'}",
+		f"- Dependencies: {report.dependency_note}",
 		"",
 	]
+	if report.summary:
+		lines.extend(["## Summary", "", report.summary, ""])
 	if report.llm_error:
 		lines.extend([f"> AI verification note: {report.llm_error}", ""])
 	if not report.findings:
 		lines.append("No findings detected.")
 	for finding in report.findings:
-		state = "Filtered as false positive" if finding.is_false_positive else (
-			"Confirmed" if finding.is_false_positive is False else "Unverified"
-		)
 		lines.extend(
 			[
 				f"## {finding.title}",
 				"",
-				f"**{finding.category.title()} / {finding.severity.title()} / {state}**",
+				f"**{finding.category.title()} / {finding.severity.title()} / {_state(finding)}**",
 				f"`{finding.file_path}:{finding.line}:{finding.column}` · `{finding.rule_id}` · {finding.source}",
 				"",
 				finding.message,
@@ -89,22 +106,23 @@ def _markdown_report(report: ReviewReport) -> str:
 			lines.extend([f"**AI explanation:** {finding.explanation}", ""])
 		if finding.suggested_fix:
 			lines.extend([f"**Suggested fix:** {finding.suggested_fix}", ""])
+		if finding.fix_diff:
+			label = "verified by re-scan" if finding.fix_verified else "NOT verified"
+			lines.extend([f"**Proposed patch ({label}):**", "", "```diff", finding.fix_diff, "```", ""])
 		if finding.code_snippet:
 			lines.extend(["```python", finding.code_snippet, "```", ""])
 	return "\n".join(lines)
 
 
 def _render_finding(finding: Finding, index: int) -> None:
-	state = (
-		"FALSE POSITIVE" if finding.is_false_positive is True else
-		"CONFIRMED" if finding.is_false_positive is False else "UNVERIFIED"
-	)
-	title = f"{index}. {finding.title} · {finding.file_path}:{finding.line} · {state}"
+	icon = {"critical": "🔴", "high": "🟠", "medium": "🟡"}.get(finding.severity, "⚪")
+	title = f"{icon} {index}. {finding.title} · {finding.file_path}:{finding.line} · {_state(finding).upper()}"
 	with st.expander(title):
 		st.markdown(
-			f'<span class="pill pill-{finding.category}">{finding.category}</span>'
-			f'<span class="pill pill-severity-{finding.severity}">{finding.severity}</span>'
-			f'<span class="pill">{finding.source}: {finding.rule_id}</span>',
+			f'<span class="pill pill-{finding.category}">{html.escape(finding.category)}</span>'
+			f'<span class="pill pill-severity-{finding.severity}">{html.escape(finding.severity)}</span>'
+			f'<span class="pill pill-{"llm" if finding.source == "llm" else "style"}">'
+			f"{html.escape(finding.source)}: {html.escape(finding.rule_id)}</span>",
 			unsafe_allow_html=True,
 		)
 		st.markdown(f"**Finding**  \n{finding.message}")
@@ -114,36 +132,51 @@ def _render_finding(finding: Finding, index: int) -> None:
 			st.markdown(f"**AI review**  \n{finding.explanation}")
 		if finding.suggested_fix:
 			st.markdown(f"**Suggested fix**  \n{finding.suggested_fix}")
+		if finding.fix_diff:
+			if finding.fix_verified:
+				st.success(f"Auto-fix verified: {finding.fix_note}")
+			else:
+				st.warning(f"Auto-fix proposed but NOT verified: {finding.fix_note}")
+			st.code(finding.fix_diff, language="diff")
 
+
+with st.sidebar:
+	st.header("Review options")
+	verify_with_llm = st.checkbox("AI verification and auto-fix (Groq)", value=True)
+	discover_with_llm = st.checkbox(
+		"AI bug discovery", value=True, help="Asks the model to look for logic bugs the linters miss in the largest files."
+	)
+	st.caption("Verification reviews up to 40 findings in parallel batches. Patches are only marked verified if a re-scan passes.")
+	st.divider()
+	st.caption("Accepted URLs: repo, /tree/<branch>, or /pull/<number> (changed files only).")
 
 st.markdown('<div class="eyebrow">Neural Storm 2026 · FT-05</div>', unsafe_allow_html=True)
 st.title("AI Code Reviewer")
 st.markdown(
-	'<p class="lede">A focused static and AI-assisted review for public Python repositories. '
-	'Source is scanned as data and never executed.</p>',
+	'<p class="lede">Static analysis finds candidates, an AI agent confirms them, writes a patch, and re-scans the patch '
+	"before showing it. Source is scanned as data and never executed.</p>",
 	unsafe_allow_html=True,
 )
 
 with st.container(border=True):
 	repository_url = st.text_input(
-		"GitHub repository URL",
-		placeholder="https://github.com/owner/repository",
-		help="Public GitHub repositories only. Shallow clone, up to 400 Python files.",
+		"GitHub repository, branch or pull request URL",
+		placeholder="https://github.com/owner/repository  ·  .../tree/branch  ·  .../pull/123",
+		help="Public GitHub only. Shallow clone, up to 400 Python files.",
 	)
-	left, right = st.columns([1, 3])
-	with left:
-		verify_with_llm = st.checkbox("Verify with Groq AI", value=True)
-	with right:
-		st.caption("AI verification reviews up to 15 findings. Configure LLM_API_KEY in .env or Streamlit secrets.")
 	run_clicked = st.button("Run Review", type="primary", icon=":material/search:")
 
 if run_clicked:
+	wait = COOLDOWN_SECONDS - (time.time() - st.session_state.get("last_run", 0))
 	if not repository_url.strip():
-		st.error("Enter a GitHub repository URL to begin.")
+		st.error("Enter a GitHub URL to begin.")
+	elif wait > 0:
+		st.warning(f"Please wait {int(wait) + 1}s before starting another review.")
 	else:
+		st.session_state["last_run"] = time.time()
 		try:
-			with st.spinner("Cloning and scanning Python files..."):
-				report = run_review(repository_url, verify_with_llm, _llm_settings())
+			with st.spinner("Cloning, scanning, verifying and patching..."):
+				report = run_review(repository_url, verify_with_llm, _llm_settings(), discover_with_llm)
 			st.session_state["review_report"] = report.model_dump(mode="json")
 		except (ValueError, RuntimeError, OSError) as error:
 			st.error(str(error))
@@ -151,41 +184,67 @@ if run_clicked:
 stored_report = st.session_state.get("review_report")
 if stored_report:
 	report = ReviewReport.model_validate(stored_report)
-	visible_findings = [finding for finding in report.findings if finding.is_false_positive is not True]
-	confirmed_count = sum(finding.is_false_positive is False for finding in report.findings)
-	false_positive_count = sum(finding.is_false_positive is True for finding in report.findings)
+	visible = [f for f in report.findings if f.is_false_positive is not True]
+	filtered = [f for f in report.findings if f.is_false_positive is True]
+	confirmed_count = sum(f.is_false_positive is False for f in report.findings)
+	verified_fixes = sum(bool(f.fix_verified) for f in report.findings)
 	st.divider()
-	st.caption(f"{report.repository_url} · scanned {datetime.fromisoformat(report.scanned_at).strftime('%Y-%m-%d %H:%M UTC')} · {report.scanned_files} Python files")
-	metric_columns = st.columns(4)
-	metric_columns[0].metric("Total findings", len(report.findings))
-	metric_columns[1].metric("Confirmed", confirmed_count)
-	metric_columns[2].metric("Filtered false positives", false_positive_count)
-	metric_columns[3].metric("Unverified", len(report.findings) - confirmed_count - false_positive_count)
+	st.caption(
+		f"{report.repository_url} · {report.target_description or 'Default branch'} · scanned "
+		f"{datetime.fromisoformat(report.scanned_at).strftime('%Y-%m-%d %H:%M UTC')} · {report.scanned_files} Python files"
+	)
+
+	score_col, summary_col = st.columns([1, 3])
+	with score_col:
+		st.markdown(f'<div class="grade">{html.escape(report.grade)}</div>', unsafe_allow_html=True)
+		st.caption(f"Health score {report.risk_score}/100")
+	with summary_col:
+		if report.summary:
+			st.markdown(f"**AI summary**  \n{report.summary}")
+		else:
+			st.markdown("**Summary**  \nEnable AI verification for a written summary of the top risks.")
+
+	metric_columns = st.columns(5)
+	metric_columns[0].metric("Findings shown", len(visible))
+	metric_columns[1].metric("AI-confirmed", confirmed_count)
+	metric_columns[2].metric("Verified auto-fixes", verified_fixes)
+	metric_columns[3].metric("Filtered by AI", len(filtered))
+	metric_columns[4].metric("Unverified", sum(f.is_false_positive is None for f in report.findings))
 
 	if report.llm_error:
 		st.info(report.llm_error)
+	if report.dependency_note:
+		st.caption(f"Dependency audit: {report.dependency_note}")
 	if not report.findings:
 		st.success("No findings detected in the scanned Python files.")
 
-	st.subheader("Findings by category")
-	categories = st.columns(3)
-	for column, category in zip(categories, ("security", "bug", "style")):
-		count = sum(finding.category == category for finding in visible_findings)
-		column.metric(category.title(), count)
+	chart_left, chart_right = st.columns(2)
+	with chart_left:
+		st.subheader("By severity")
+		st.bar_chart({s: sum(f.severity == s for f in visible) for s in ("critical", "high", "medium", "low", "info")})
+	with chart_right:
+		st.subheader("By category")
+		st.bar_chart({c: sum(f.category == c for f in visible) for c in ("security", "bug", "style")})
 
 	st.subheader("Review details")
-	if visible_findings:
-		for index, finding in enumerate(visible_findings, start=1):
-			_render_finding(finding, index)
-	elif report.findings:
+	severity_filter = st.multiselect(
+		"Severity", ["critical", "high", "medium", "low", "info"], default=["critical", "high", "medium", "low", "info"]
+	)
+	shown = [f for f in visible if f.severity in severity_filter]
+	for index, finding in enumerate(shown, start=1):
+		_render_finding(finding, index)
+	if not shown and report.findings and not visible:
 		st.info("All findings were filtered as false positives by the AI verifier.")
+
+	if filtered:
+		with st.expander(f"Filtered by AI as false positives ({len(filtered)}) - audit these decisions"):
+			for index, finding in enumerate(filtered, start=1):
+				_render_finding(finding, index)
 
 	json_bytes = json.dumps(report.model_dump(mode="json"), indent=2).encode("utf-8")
 	markdown_bytes = _markdown_report(report).encode("utf-8")
 	export_json, export_markdown = st.columns(2)
-	export_json.download_button(
-		"Download JSON report", json_bytes, file_name="code-review-report.json", mime="application/json"
-	)
+	export_json.download_button("Download JSON report", json_bytes, file_name="code-review-report.json", mime="application/json")
 	export_markdown.download_button(
 		"Download Markdown report", markdown_bytes, file_name="code-review-report.md", mime="text/markdown"
 	)
