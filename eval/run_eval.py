@@ -9,10 +9,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from eval.seeded_bugs import SEEDED_CASES
-from reviewer.llm_review import review_findings
-from reviewer.models import Finding
-from reviewer.static_scan import scan_repository
+from eval.seeded_bugs import SEEDED_CASES  # noqa: E402
+from reviewer.llm_review import review_findings  # noqa: E402
+from reviewer.models import Finding  # noqa: E402
+from reviewer.static_scan import scan_repository  # noqa: E402
 
 
 def _metrics(expected: set[str], predicted: set[str], all_samples: set[str]) -> dict[str, int | float | None]:
