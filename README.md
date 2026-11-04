@@ -12,7 +12,7 @@ Code review is a bottleneck for small teams. Linters produce long lists of noisy
 
 | Name | Role | College | Contact |
 | --- | --- | --- | --- |
-| Yuvraj Rana | Solo: design, development, evaluation | `<ADD COLLEGE>` | `<ADD GITHUB / EMAIL>` |
+| Yuvraj Rana | Solo: design, development, evaluation | `Jaypee Institute of Information and Technology ` | `<shivaa.rana143@gmail.com>` |
 
 ## What it does
 
