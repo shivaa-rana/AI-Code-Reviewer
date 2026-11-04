@@ -33,12 +33,6 @@ flowchart LR
 - Dark Streamlit dashboard with category and verification summaries, expandable findings, and JSON/Markdown exports.
 - A 10-case seeded evaluation harness that calculates file-level precision and recall from actual scanner output.
 
-## Screenshots
-
-![AI Code Reviewer dashboard](screenshots/dashboard.png)
-
-Captured from the running local dashboard. The `screenshots/` directory can also hold additional submission captures.
-
 ## Setup
 
 Python 3.10 or newer is recommended.
