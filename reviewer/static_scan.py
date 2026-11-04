@@ -2,12 +2,43 @@ from __future__ import annotations
 
 import json
 import shutil
+from functools import lru_cache
 import subprocess
 from pathlib import Path
 
 from .models import Finding
 
 SCANNER_TIMEOUT_SECONDS = 60
+
+
+IMPORT_ONLY_RULES = {f"B{number}" for number in range(403, 416)}
+
+
+@lru_cache(maxsize=512)
+def _read_lines(file_path: Path) -> tuple[str, ...]:
+        try:
+                return tuple(file_path.read_text(encoding="utf-8", errors="replace").splitlines())
+        except OSError:
+                return ()
+
+
+def _is_test_path(file_path: str) -> bool:
+        parts = [part.lower() for part in Path(file_path).parts]
+        name = parts[-1] if parts else ""
+        return (
+                any(part in {"test", "tests", "testing"} for part in parts[:-1])
+                or name.startswith("test_")
+                or name.endswith("_test.py")
+                or name == "conftest.py"
+        )
+
+
+def _is_noise(finding: Finding) -> bool:
+        if finding.source != "bandit":
+                return False
+        if finding.rule_id in IMPORT_ONLY_RULES:
+                return True
+        return _is_test_path(finding.file_path) and finding.severity == "low"
 
 
 def _snippet(file_path: Path, line: int, root: Path) -> str:
@@ -60,7 +91,7 @@ def scan_repository(root: Path, python_files: list[Path]) -> list[Finding]:
 		except ValueError as error:
 			raise ValueError("Scanner inputs must remain inside the cloned repository.") from error
 		if relative.suffix.lower() == ".py":
-			relative_files.append(relative.as_posix())
+			relative_files.append("./" + relative.as_posix())
 	if not relative_files:
 		return []
 
@@ -122,7 +153,7 @@ def scan_repository(root: Path, python_files: list[Path]) -> list[Finding]:
 		line = max(1, int(location.get("row") or 1))
 		column = max(1, int(location.get("column") or 1))
 		code = str(result.get("code") or "RUFF")
-		category = "bug" if code.startswith(("B", "F", "S", "UP")) else "style"
+		category = "bug" if code.startswith(("B", "F")) else "style"
 		findings.append(
 			Finding(
 				id=f"ruff:{code}:{relative}:{line}:{column}",
