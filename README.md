@@ -112,7 +112,6 @@ The single false positive is Bandit's low-severity B603 on a safe `subprocess.ru
 
 ## AI Tools Used
 
-- **ChatGPT**: brainstorming the architecture and reviewing the prompts.
-- **GitHub Copilot**: code completion while writing the app.
-- **Claude**: used to review and extend the project during the hackathon window (auto-fix agent, PR mode, secret and dependency scanning, tests).
-- **Inside the product:** Llama 3.3 70B (via Groq) performs verification, fix generation, bug discovery and summarisation.
+- ChatGPT
+- Copilot
+
