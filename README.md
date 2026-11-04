@@ -83,5 +83,5 @@ The LLM evaluation was **not run** because `LLM_API_KEY` was not configured in t
 
 ## AI Tools Used
 
-- ChatGPT
+- Claude
 - GitHub Copilot
