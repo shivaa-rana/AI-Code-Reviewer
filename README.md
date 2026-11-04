@@ -2,11 +2,6 @@
 
 **Neural Storm 2026 · Track: Future Tech · Sub-theme: AI Agents / Smart Automation (FT-05, AI-Powered Automated Code Review)**
 
-> **Live demo:** `<ADD STREAMLIT CLOUD URL>` · **Demo video:** `<ADD 2-MIN VIDEO URL>`
-
-![Dashboard](screenshots/dashboard.png)
-<!-- Add 2-3 more screenshots: an expanded finding with a verified auto-fix diff, and a PR review. -->
-
 ## Problem Statement
 
 Code review is a bottleneck for small teams. Linters produce long lists of noisy warnings, and reviewers waste time deciding which ones are real, how severe they are, and how to fix them. Security slips (hardcoded keys, unsafe deserialization, vulnerable dependencies) ship because nobody has time to triage hundreds of alerts.
